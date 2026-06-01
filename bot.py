@@ -55,6 +55,12 @@ def build_system_prompt() -> str:
         exp_cats = ["Food", "Transport", "Shopping", "Entertainment", "Health", "Travel", "Utilities", "Other"]
         inc_cats = ["Salary", "Freelance", "Business", "Investment", "Other"]
 
+    from datetime import timedelta
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    two_days_ago = today - timedelta(days=2)
+    seven_days_ago = today - timedelta(days=7)
+
     return f"""You are a personal finance assistant in a Telegram bot for an Indonesian user.
 Parse the user's message and return ONLY a JSON object (no markdown, no explanation).
 The user may write in English, Indonesian, or a mix of both.
@@ -79,11 +85,22 @@ Current income categories: {inc_cats}
 Indonesian amounts: ribu/rb/k = thousands, juta/jt/m = millions.
 85 ribu = 85000, 5 juta = 5000000, 1.5jt = 1500000.
 
+Today's date: {today}
+
+DATE PARSING — always include a "date" field in YYYY-MM-DD format:
+- No date mentioned → use today: {today}
+- "kemarin" / "yesterday" → {yesterday}
+- "2 hari lalu" / "2 days ago" → {two_days_ago}
+- "minggu lalu" / "last week" → use 7 days ago: {seven_days_ago}
+- "Senin" / "Monday" → most recent Monday
+- Specific date like "20 Mei" → infer current month/year
+- Time of day (siang, malam, pagi) → note in description, doesn't change date
+
 For "log_expense":
-{{"intent":"log_expense","amount":<IDR number>,"category":<from expense list>,"description":<short>,"location":<or null>}}
+{{"intent":"log_expense","amount":<IDR number>,"category":<from expense list>,"description":<short>,"location":<or null>,"date":<YYYY-MM-DD>}}
 
 For "log_income":
-{{"intent":"log_income","amount":<IDR number>,"source":<who paid>,"category":<from income list>,"description":<short or null>}}
+{{"intent":"log_income","amount":<IDR number>,"source":<who paid>,"category":<from income list>,"description":<short or null>,"date":<YYYY-MM-DD>}}
 
 For "query_expenses" or "query_income":
 {{"intent":"query_expenses","period":<"today"|"this_week"|"this_month"|"last_month">,"category":<or null>}}
@@ -106,15 +123,23 @@ For "remove_category":
 For "list_categories":
 {{"intent":"list_categories","cat_type":<"expense"|"income"|null>}}
 
-Examples:
-- "Habis 85rb makan siang di warung" → log_expense, 85000, Food, location=warung
-- "Tadi naik grab 45 ribu" → log_expense, 45000, Transport
-- "Masuk gaji 10 juta" → log_income, 10000000, Salary
-- "Dapat bayaran client ABC 5jt" → log_income, 5000000, Freelance
-- "Pengeluaran minggu ini?" → query_expenses, this_week
-- "Cashflow bulan ini?" → query_cashflow, this_month
-- "I have 3 shares of VOO" → update_asset, VOO, 3, stock
-- "Show portfolio" → query_assets
+IMPORTANT: If the message contains MULTIPLE transactions, return a JSON array:
+[
+  {{"intent":"log_expense","amount":45000,"category":"Food","description":"McD","location":null}},
+  {{"intent":"log_expense","amount":32000,"category":"Transport","description":"Grab","location":null}}
+]
+Only use array for multiple log_expense or log_income. Queries/assets always return single object.
+
+Single examples:
+- "Habis 85rb makan siang di warung" → single log_expense, 85000, Food
+- "Masuk gaji 10 juta" → single log_income, 10000000, Salary
+- "Cashflow bulan ini?" → single query_cashflow
+- "I have 3 shares of VOO" → single update_asset
+
+Multiple examples:
+- "McD 45rb, grab 32rb, kopi 65rb" → array of 3 log_expense
+- "Beli bensin 80k sama makan 55k" → array of 2 log_expense
+- "Dapat gaji 10jt dan bonus 2jt" → array of 2 log_income
 """
 
 
@@ -140,15 +165,47 @@ Tips:
 """
 
 
-def ask_claude(message: str) -> dict:
+def extract_json(text: str):
+    """Robustly extract JSON (object or array) from Claude response."""
+    text = re.sub(r"```json|```", "", text).strip()
+    # Try direct parse first (handles both dict and list)
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    # Try to find a JSON array first
+    match = re.search(r"\[.*?\]", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except Exception:
+            pass
+    # Try first {...} block
+    match = re.search(r"\{.*?\}", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except Exception:
+            pass
+    # Last resort — largest {...} block
+    matches = re.findall(r"\{[^{}]*\}", text, re.DOTALL)
+    for m in sorted(matches, key=len, reverse=True):
+        try:
+            return json.loads(m)
+        except Exception:
+            continue
+    raise ValueError(f"No valid JSON found in: {text[:200]}")
+
+
+def ask_claude(message: str):
+    """Returns a single dict or a list of dicts for multiple transactions."""
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=300,
+        max_tokens=600,
         system=build_system_prompt(),
         messages=[{"role": "user", "content": message}]
     )
-    raw = re.sub(r"```json|```", "", response.content[0].text.strip()).strip()
-    return json.loads(raw)
+    return extract_json(response.content[0].text)
 
 
 def scan_receipt(image_bytes: bytes, media_type: str, caption: str = "") -> dict:
@@ -173,8 +230,7 @@ def scan_receipt(image_bytes: bytes, media_type: str, caption: str = "") -> dict
             ]
         }]
     )
-    raw = re.sub(r"```json|```", "", result.content[0].text.strip()).strip()
-    return json.loads(raw)
+    return extract_json(result.content[0].text)
 
 
 def fmt(amount: float) -> str:
@@ -225,38 +281,44 @@ def handle_receipt(image_bytes: bytes, media_type: str, caption: str = "") -> st
 
 def handle_log_expense(data: dict) -> str:
     now = datetime.now()
+    date_str = data.get("date") or now.strftime("%Y-%m-%d")
     sheets.append_expense({
-        "date": now.strftime("%Y-%m-%d"),
+        "date": date_str,
         "time": now.strftime("%H:%M"),
         "amount": data["amount"],
         "category": data.get("category", "Other"),
         "description": data.get("description", ""),
         "location": data.get("location", ""),
     })
+    date_note = f"\n📅 {date_str}" if date_str != now.strftime("%Y-%m-%d") else ""
     return (
         f"✅ *Expense logged*\n"
         f"💸 {fmt(data['amount'])}\n"
         f"📂 {data.get('category', 'Other')}\n"
         f"📝 {data.get('description', '')}\n"
         f"📍 {data.get('location') or '—'}"
+        f"{date_note}"
     )
 
 
 def handle_log_income(data: dict) -> str:
     now = datetime.now()
+    date_str = data.get("date") or now.strftime("%Y-%m-%d")
     sheets.append_income({
-        "date": now.strftime("%Y-%m-%d"),
+        "date": date_str,
         "time": now.strftime("%H:%M"),
         "amount": data["amount"],
         "source": data.get("source", ""),
         "category": data.get("category", "Other"),
         "description": data.get("description", ""),
     })
+    date_note = f"\n📅 {date_str}" if date_str != now.strftime("%Y-%m-%d") else ""
     return (
         f"✅ *Income logged*\n"
         f"💰 {fmt(data['amount'])}\n"
         f"🏷 {data.get('category', 'Other')}\n"
         f"🏢 {data.get('source') or '—'}"
+        f"{date_note}"
     )
 
 
@@ -396,6 +458,66 @@ def handle_list_categories(data: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Multi-transaction handler ─────────────────────────────────────────────────
+
+def handle_multi(items: list) -> str:
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%H:%M")
+    expenses, incomes, errors = [], [], []
+
+    for item in items:
+        intent = item.get("intent", "")
+        date_str = item.get("date") or today_str
+        try:
+            if intent == "log_expense":
+                row = {"date": date_str, "time": time_str,
+                       "amount": item["amount"],
+                       "category": item.get("category", "Other"),
+                       "description": item.get("description", ""),
+                       "location": item.get("location", "")}
+                sheets.append_expense(row)
+                expenses.append(row)
+            elif intent == "log_income":
+                row = {"date": date_str, "time": time_str,
+                       "amount": item["amount"],
+                       "source": item.get("source", ""),
+                       "category": item.get("category", "Other"),
+                       "description": item.get("description", "")}
+                sheets.append_income(row)
+                incomes.append(row)
+        except Exception as e:
+            errors.append(str(e))
+
+    total = len(expenses) + len(incomes)
+    suffix = "s" if total != 1 else ""
+    lines = ["*" + str(total) + " transaction" + suffix + " logged* ✅"]
+
+    if expenses:
+        lines.append("")
+        lines.append("*Expenses:*")
+        for r in expenses:
+            desc = " (" + r["description"] + ")" if r.get("description") else ""
+            date_note = " — " + r["date"] if r.get("date") and r["date"] != today_str else ""
+            lines.append("  " + fmt(r["amount"]) + " — " + r["category"] + desc + date_note)
+        lines.append("  Total: " + fmt(sum(r["amount"] for r in expenses)))
+
+    if incomes:
+        lines.append("")
+        lines.append("*Income:*")
+        for r in incomes:
+            src = " (" + r["source"] + ")" if r.get("source") else ""
+            date_note = " — " + r["date"] if r.get("date") and r["date"] != today_str else ""
+            lines.append("  " + fmt(r["amount"]) + " — " + r["category"] + src + date_note)
+        lines.append("  Total: " + fmt(sum(r["amount"] for r in incomes)))
+
+    if errors:
+        lines.append("")
+        lines.append(str(len(errors)) + " item(s) failed to log.")
+
+    return "\n".join(lines)
+
+
 # ── Webhook ────────────────────────────────────────────────────────────────────
 
 @app.route("/telegram", methods=["POST"])
@@ -438,28 +560,33 @@ def telegram_webhook():
                 )
             else:
                 parsed = ask_claude(text)
-                intent = parsed.get("intent", "unknown")
-                handlers = {
-                    "log_expense":     lambda: handle_log_expense(parsed),
-                    "log_income":      lambda: handle_log_income(parsed),
-                    "query_expenses":  lambda: handle_query_expenses(parsed),
-                    "query_income":    lambda: handle_query_income(parsed),
-                    "query_cashflow":  lambda: handle_query_cashflow(parsed),
-                    "update_asset":    lambda: handle_update_asset(parsed),
-                    "query_assets":    lambda: handle_query_assets(),
-                    "query_networth":  lambda: handle_query_networth(),
-                    "add_category":    lambda: handle_add_category(parsed),
-                    "remove_category": lambda: handle_remove_category(parsed),
-                    "list_categories": lambda: handle_list_categories(parsed),
-                }
-                reply = handlers.get(intent, lambda: (
-                    "I didn't understand that. Try:\n"
-                    "• _\"Habis 85rb makan siang\"_\n"
-                    "• _\"Masuk gaji 10 juta\"_\n"
-                    "• _\"Cashflow bulan ini?\"_\n"
-                    "• Send a 📷 receipt photo\n"
-                    "• /help for more"
-                ))()
+
+                # Multiple transactions (array)
+                if isinstance(parsed, list):
+                    reply = handle_multi(parsed)
+                else:
+                    intent = parsed.get("intent", "unknown")
+                    handlers = {
+                        "log_expense":     lambda: handle_log_expense(parsed),
+                        "log_income":      lambda: handle_log_income(parsed),
+                        "query_expenses":  lambda: handle_query_expenses(parsed),
+                        "query_income":    lambda: handle_query_income(parsed),
+                        "query_cashflow":  lambda: handle_query_cashflow(parsed),
+                        "update_asset":    lambda: handle_update_asset(parsed),
+                        "query_assets":    lambda: handle_query_assets(),
+                        "query_networth":  lambda: handle_query_networth(),
+                        "add_category":    lambda: handle_add_category(parsed),
+                        "remove_category": lambda: handle_remove_category(parsed),
+                        "list_categories": lambda: handle_list_categories(parsed),
+                    }
+                    reply = handlers.get(intent, lambda: (
+                        "I didn't understand that. Try:\n"
+                        "• _\"Habis 85rb makan siang\"_\n"
+                        "• _\"Masuk gaji 10 juta\"_\n"
+                        "• _\"Cashflow bulan ini?\"_\n"
+                        "• Send a 📷 receipt photo\n"
+                        "• /help for more"
+                    ))()
         else:
             reply = "Send me a message or a receipt photo 📷"
 
