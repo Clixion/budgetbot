@@ -139,13 +139,23 @@ Examples: "hapus transaksi terakhir" → count=1, type=any
 "delete last income" → count=1, type=income
 
 For "edit_transaction":
-{{"intent":"edit_transaction","type":<"expense"|"income">,"search":<keyword to find the transaction e.g. merchant/description name, or "terakhir"/"last">,"field":<"amount"|"category"|"description"|"location"|"source"|"date">,"value":<new value as string>}}
+{{"intent":"edit_transaction","type":<"expense"|"income">,"search":<specific keyword from the message to find the transaction — use the merchant/item name like "gaji pegawai", "McD", "Lanzhou", "grab"; only use "last" if no specific name is mentioned>,"field":<"amount"|"category"|"description"|"location"|"source"|"date">,"value":<new value as string>}}
+
+IMPORTANT for edit_transaction:
+- "ingat itu" / "remember this" / "catat" = the user is teaching the bot a rule → still treat as edit_transaction for the most recent matching transaction
+- Extract the most specific search keyword from the message (merchant name, item, description)
+- Words like "tadi", "barusan", "kemarin", "yang" are NOT search keywords — ignore them and extract the actual item/merchant name
+- For category edits: field=category, value=<the category name mentioned>
+- For amount edits: field=amount, value=<IDR number>
+
 Examples:
-- "Yang tadi McD harusnya 65rb bukan 45rb" → type=expense, search=McD, field=amount, value=65000
-- "Transaksi Lanzhou kategorinya harusnya Food" → type=expense, search=Lanzhou, field=category, value=Food
+- "Yang tadi McD harusnya 65rb bukan 45rb" → search=McD, field=amount, value=65000
+- "Transaksi Lanzhou kategorinya harusnya Food" → search=Lanzhou, field=category, value=Food
+- "Gaji Pegawai masuk kategori Payroll" → search=gaji pegawai, field=category, value=Payroll
+- "Transaksi tadi yang gaji pegawai 1.5jt masuk kategori payroll" → search=gaji pegawai, field=category, value=Payroll
 - "Koreksi income terakhir sourcenya client Budi" → type=income, search=last, field=source, value=client Budi
-- "Ganti deskripsi grab terakhir jadi Transport Kantor" → type=expense, search=grab, field=description, value=Transport Kantor
-- "Yang kemarin dari Hokben harusnya 35rb" → type=expense, search=Hokben, field=amount, value=35000
+- "Yang kemarin Hokben harusnya 35rb" → search=Hokben, field=amount, value=35000
+- "Grab terakhir kategorinya Transport" → search=grab, field=category, value=Transport
 
 IMPORTANT: If the message contains MULTIPLE transactions, return a JSON array:
 [
