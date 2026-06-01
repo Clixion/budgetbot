@@ -10,10 +10,17 @@ import re
 import base64
 import requests as req_lib
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from flask import Flask, request, Response, jsonify
 import anthropic
 import sheets
 import assets
+
+TZ = ZoneInfo("Asia/Jakarta")
+
+def now() -> datetime:
+    """Return current datetime in WIB (GMT+7)."""
+    return datetime.now(TZ)
 
 app = Flask(__name__)
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -56,7 +63,7 @@ def build_system_prompt() -> str:
         inc_cats = ["Salary", "Freelance", "Business", "Investment", "Other"]
 
     from datetime import timedelta
-    today = datetime.now().date()
+    today = now().date()
     yesterday = today - timedelta(days=1)
     two_days_ago = today - timedelta(days=2)
     seven_days_ago = today - timedelta(days=7)
@@ -77,6 +84,8 @@ Classify into one of these intents:
 - "add_category": user wants to add a category
 - "remove_category": user wants to remove a category
 - "list_categories": user wants to see categories
+- "delete_transactions": user wants to delete recent transactions
+- "edit_transaction": user wants to correct/edit an existing transaction
 - "unknown": doesn't fit
 
 Current expense categories: {exp_cats}
@@ -122,6 +131,21 @@ For "remove_category":
 
 For "list_categories":
 {{"intent":"list_categories","cat_type":<"expense"|"income"|null>}}
+
+For "delete_transactions":
+{{"intent":"delete_transactions","count":<number of recent entries to delete, default 1>,"type":<"expense"|"income"|"any">}}
+Examples: "hapus transaksi terakhir" → count=1, type=any
+"hapus 3 pengeluaran terakhir" → count=3, type=expense
+"delete last income" → count=1, type=income
+
+For "edit_transaction":
+{{"intent":"edit_transaction","type":<"expense"|"income">,"search":<keyword to find the transaction e.g. merchant/description name, or "terakhir"/"last">,"field":<"amount"|"category"|"description"|"location"|"source"|"date">,"value":<new value as string>}}
+Examples:
+- "Yang tadi McD harusnya 65rb bukan 45rb" → type=expense, search=McD, field=amount, value=65000
+- "Transaksi Lanzhou kategorinya harusnya Food" → type=expense, search=Lanzhou, field=category, value=Food
+- "Koreksi income terakhir sourcenya client Budi" → type=income, search=last, field=source, value=client Budi
+- "Ganti deskripsi grab terakhir jadi Transport Kantor" → type=expense, search=grab, field=description, value=Transport Kantor
+- "Yang kemarin dari Hokben harusnya 35rb" → type=expense, search=Hokben, field=amount, value=35000
 
 IMPORTANT: If the message contains MULTIPLE transactions, return a JSON array:
 [
@@ -256,7 +280,7 @@ def handle_receipt(image_bytes: bytes, media_type: str, caption: str = "") -> st
     if amount <= 0:
         return "⚠️ Could not read the total. Try a clearer photo or log manually."
 
-    now = datetime.now()
+    now = now()
     sheets.append_expense({
         "date": now.strftime("%Y-%m-%d"),
         "time": now.strftime("%H:%M"),
@@ -280,7 +304,7 @@ def handle_receipt(image_bytes: bytes, media_type: str, caption: str = "") -> st
 
 
 def handle_log_expense(data: dict) -> str:
-    now = datetime.now()
+    now = now()
     date_str = data.get("date") or now.strftime("%Y-%m-%d")
     sheets.append_expense({
         "date": date_str,
@@ -302,7 +326,7 @@ def handle_log_expense(data: dict) -> str:
 
 
 def handle_log_income(data: dict) -> str:
-    now = datetime.now()
+    now = now()
     date_str = data.get("date") or now.strftime("%Y-%m-%d")
     sheets.append_income({
         "date": date_str,
@@ -381,7 +405,7 @@ def handle_update_asset(data: dict) -> str:
         "ticker": ticker, "name": data.get("name", ticker),
         "type": asset_type, "units": units,
         "price": price or 0, "value": value or 0,
-        "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "updated": now().strftime("%Y-%m-%d %H:%M"),
     })
     return (
         f"✅ *Asset updated*\n"
@@ -405,7 +429,7 @@ def handle_query_assets() -> str:
         value = price * units if price else float(row.get("value", 0))
         if price:
             sheets.upsert_asset({**row, "price": price, "value": value,
-                                  "updated": datetime.now().strftime("%Y-%m-%d %H:%M")})
+                                  "updated": now().strftime("%Y-%m-%d %H:%M")})
         if asset_type in ("stock", "crypto"):
             total_usd += value
             lines.append(f"  {ticker}: ${value:,.2f} ({units} @ ${price:,.2f})" if price else f"  {ticker}: {units} units")
@@ -458,10 +482,83 @@ def handle_list_categories(data: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Edit handler ──────────────────────────────────────────────────────────────
+
+def handle_edit_transaction(data: dict) -> str:
+    tx_type = data.get("type", "expense")
+    search = data.get("search", "last")
+    field = data.get("field", "")
+    value = data.get("value", "")
+
+    if not field or value == "":
+        return "Could not understand what to edit. Be more specific, e.g. mention the merchant name and correct amount."
+
+    try:
+        if tx_type == "income":
+            updated = sheets.find_and_edit_income(search, field, value)
+        else:
+            updated = sheets.find_and_edit_expense(search, field, value)
+    except Exception as e:
+        return "⚠️ Error editing transaction: " + str(e)
+
+    if not updated:
+        return ("⚠️ Could not find a transaction matching *" + search + "*\n"
+                "Try being more specific, e.g. the merchant name or description.")
+
+    desc = updated.get("description") or updated.get("source") or updated.get("category") or "transaction"
+    field_display = {"amount": "Amount", "category": "Category", "description": "Description",
+                     "location": "Location", "source": "Source", "date": "Date"}.get(field, field)
+    value_display = fmt(float(value)) if field == "amount" else str(value)
+
+    return (
+        "✅ *Transaction updated*\n"
+        "📝 " + desc + "\n"
+        "🔄 " + field_display + " → " + value_display
+    )
+
+
+# ── Delete handler ────────────────────────────────────────────────────────────
+
+def handle_delete_transactions(data: dict) -> str:
+    count = int(data.get("count", 1))
+    tx_type = data.get("type", "any")
+
+    deleted_exp, deleted_inc = [], []
+
+    if tx_type in ("expense", "any"):
+        n = count if tx_type == "expense" else count
+        deleted_exp = sheets.delete_last_expenses(n)
+
+    if tx_type in ("income", "any"):
+        n = count if tx_type == "income" else count
+        deleted_inc = sheets.delete_last_income(n)
+
+    # For "any", we want the most recent N across both — delete from whichever had newer entries
+    # Simple approach: if type=any, delete last N expenses (most common case)
+    # User can specify type=income to target income
+    total = len(deleted_exp) + len(deleted_inc)
+
+    if total == 0:
+        return "No transactions found to delete."
+
+    lines = ["🗑 *" + str(total) + " transaction" + ("s" if total != 1 else "") + " deleted*"]
+
+    for r in deleted_exp:
+        desc = r.get("description") or r.get("category") or "Expense"
+        lines.append("  ~~" + fmt(float(r["amount"])) + " — " + desc + "~~")
+
+    for r in deleted_inc:
+        desc = r.get("source") or r.get("description") or "Income"
+        lines.append("  ~~" + fmt(float(r["amount"])) + " — " + desc + "~~")
+
+    lines.append("_To undo, re-log the transaction manually._")
+    return "\n".join(lines)
+
+
 # ── Multi-transaction handler ─────────────────────────────────────────────────
 
 def handle_multi(items: list) -> str:
-    now = datetime.now()
+    now = now()
     today_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M")
     expenses, incomes, errors = [], [], []
@@ -578,6 +675,8 @@ def telegram_webhook():
                         "add_category":    lambda: handle_add_category(parsed),
                         "remove_category": lambda: handle_remove_category(parsed),
                         "list_categories": lambda: handle_list_categories(parsed),
+                        "delete_transactions": lambda: handle_delete_transactions(parsed),
+                        "edit_transaction": lambda: handle_edit_transaction(parsed),
                     }
                     reply = handlers.get(intent, lambda: (
                         "I didn't understand that. Try:\n"
