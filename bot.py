@@ -86,6 +86,7 @@ Classify into one of these intents:
 - "list_categories": user wants to see categories
 - "delete_transactions": user wants to delete recent transactions
 - "edit_transaction": user wants to correct/edit an existing transaction
+- "query_date": user asking what today's date or time is
 - "unknown": doesn't fit
 
 Current expense categories: {exp_cats}
@@ -131,6 +132,10 @@ For "remove_category":
 
 For "list_categories":
 {{"intent":"list_categories","cat_type":<"expense"|"income"|null>}}
+
+For "query_date":
+{{"intent":"query_date"}}
+Examples: "tanggal berapa sekarang?", "hari ini tanggal berapa?", "what day is today?", "sekarang jam berapa?"
 
 For "delete_transactions":
 {{"intent":"delete_transactions","count":<number of recent entries to delete, default 1>,"type":<"expense"|"income"|"any">}}
@@ -555,6 +560,24 @@ def handle_edit_transaction(data: dict) -> str:
     )
 
 
+# ── Date handler ──────────────────────────────────────────────────────────────
+
+def handle_query_date() -> str:
+    current = now()
+    days = ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"]
+    months = ["Januari","Februari","Maret","April","Mei","Juni",
+              "Juli","Agustus","September","Oktober","November","Desember"]
+    day_name = days[current.weekday()]
+    day = current.day
+    month = months[current.month - 1]
+    year = current.year
+    time_str = current.strftime("%H:%M")
+    return (
+        "📅 *" + day_name + ", " + str(day) + " " + month + " " + str(year) + "*\n"
+        "🕐 " + time_str + " WIB"
+    )
+
+
 # ── Delete handler ────────────────────────────────────────────────────────────
 
 def handle_delete_transactions(data: dict) -> str:
@@ -721,6 +744,7 @@ def telegram_webhook():
                         "remove_category": lambda: handle_remove_category(parsed),
                         "list_categories": lambda: handle_list_categories(parsed),
                         "delete_transactions": lambda: handle_delete_transactions(parsed),
+                        "query_date": lambda: handle_query_date(),
                         "edit_transaction": lambda: handle_edit_transaction(parsed),
                     }
                     reply = handlers.get(intent, lambda: (
