@@ -280,10 +280,10 @@ def handle_receipt(image_bytes: bytes, media_type: str, caption: str = "") -> st
     if amount <= 0:
         return "⚠️ Could not read the total. Try a clearer photo or log manually."
 
-    now = now()
+    current_time = now()
     sheets.append_expense({
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
+        "date": current_time.strftime("%Y-%m-%d"),
+        "time": current_time.strftime("%H:%M"),
         "amount": amount,
         "category": data.get("category", "Other"),
         "description": data.get("description", ""),
@@ -304,17 +304,17 @@ def handle_receipt(image_bytes: bytes, media_type: str, caption: str = "") -> st
 
 
 def handle_log_expense(data: dict) -> str:
-    now = now()
-    date_str = data.get("date") or now.strftime("%Y-%m-%d")
+    current_time = now()
+    date_str = data.get("date") or current_time.strftime("%Y-%m-%d")
     sheets.append_expense({
         "date": date_str,
-        "time": now.strftime("%H:%M"),
+        "time": current_time.strftime("%H:%M"),
         "amount": data["amount"],
         "category": data.get("category", "Other"),
         "description": data.get("description", ""),
         "location": data.get("location", ""),
     })
-    date_note = f"\n📅 {date_str}" if date_str != now.strftime("%Y-%m-%d") else ""
+    date_note = f"\n📅 {date_str}" if date_str != current_time.strftime("%Y-%m-%d") else ""
     return (
         f"✅ *Expense logged*\n"
         f"💸 {fmt(data['amount'])}\n"
@@ -326,17 +326,17 @@ def handle_log_expense(data: dict) -> str:
 
 
 def handle_log_income(data: dict) -> str:
-    now = now()
-    date_str = data.get("date") or now.strftime("%Y-%m-%d")
+    current_time = now()
+    date_str = data.get("date") or current_time.strftime("%Y-%m-%d")
     sheets.append_income({
         "date": date_str,
-        "time": now.strftime("%H:%M"),
+        "time": current_time.strftime("%H:%M"),
         "amount": data["amount"],
         "source": data.get("source", ""),
         "category": data.get("category", "Other"),
         "description": data.get("description", ""),
     })
-    date_note = f"\n📅 {date_str}" if date_str != now.strftime("%Y-%m-%d") else ""
+    date_note = f"\n📅 {date_str}" if date_str != current_time.strftime("%Y-%m-%d") else ""
     return (
         f"✅ *Income logged*\n"
         f"💰 {fmt(data['amount'])}\n"
@@ -558,9 +558,9 @@ def handle_delete_transactions(data: dict) -> str:
 # ── Multi-transaction handler ─────────────────────────────────────────────────
 
 def handle_multi(items: list) -> str:
-    now = now()
-    today_str = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M")
+    current_time = now()
+    today_str = current_time.strftime("%Y-%m-%d")
+    time_str = current_time.strftime("%H:%M")
     expenses, incomes, errors = [], [], []
 
     for item in items:
