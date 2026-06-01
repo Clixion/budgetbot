@@ -75,8 +75,8 @@ The user may write in English, Indonesian, or a mix of both.
 Classify into one of these intents:
 - "log_expense": user spent money
 - "log_income": user received money
-- "query_expenses": user wants spending summary
-- "query_income": user wants income summary
+- "query_expenses": user wants spending summary or detailed transaction list
+- "query_income": user wants income summary or detailed transaction list
 - "query_cashflow": user wants income vs expenses
 - "update_asset": user updating a holding
 - "query_assets": user wants portfolio
@@ -112,7 +112,7 @@ For "log_income":
 {{"intent":"log_income","amount":<IDR number>,"source":<who paid>,"category":<from income list>,"description":<short or null>,"date":<YYYY-MM-DD>}}
 
 For "query_expenses" or "query_income":
-{{"intent":"query_expenses","period":<"today"|"this_week"|"this_month"|"last_month">,"category":<or null>}}
+{{"intent":"query_expenses","period":<"today"|"this_week"|"this_month"|"last_month">,"category":<or null>,"detail":<true if user asks for detail/rincian/list, false otherwise>}}
 
 For "query_cashflow":
 {{"intent":"query_cashflow","period":<"today"|"this_week"|"this_month"|"last_month">}}
@@ -145,6 +145,9 @@ IMPORTANT for edit_transaction:
 - "ingat itu" / "remember this" / "catat" = the user is teaching the bot a rule → still treat as edit_transaction for the most recent matching transaction
 - Extract the most specific search keyword from the message (merchant name, item, description)
 - Words like "tadi", "barusan", "kemarin", "yang" are NOT search keywords — ignore them and extract the actual item/merchant name
+- If user says to change date of multiple specific items (e.g. "McD sama Hokben itu tanggal X"), treat as MULTIPLE edit_transaction intents in an array
+- "ganti tanggalnya" / "change the date" = field=date
+- When editing date, value should be YYYY-MM-DD format
 - For category edits: field=category, value=<the category name mentioned>
 - For amount edits: field=amount, value=<IDR number>
 
@@ -156,6 +159,8 @@ Examples:
 - "Koreksi income terakhir sourcenya client Budi" → type=income, search=last, field=source, value=client Budi
 - "Yang kemarin Hokben harusnya 35rb" → search=Hokben, field=amount, value=35000
 - "Grab terakhir kategorinya Transport" → search=grab, field=category, value=Transport
+- "McD sama Hokben itu tanggal 2 juni 2026 ganti tanggalnya" → array: [{{edit McD date}}, {{edit Hokben date}}]
+- "Makan mcd sama dinner wakidi tanggal 2 juni 2026, ganti tanggalnya" → array of edit_transaction for each item
 
 IMPORTANT: If the message contains MULTIPLE transactions, return a JSON array:
 [
@@ -358,35 +363,58 @@ def handle_log_income(data: dict) -> str:
 
 def handle_query_expenses(data: dict) -> str:
     period = data.get("period", "this_month")
+    detail = data.get("detail", False)
     rows = sheets.get_expenses(period=period, category=data.get("category"))
     if not rows:
-        return f"No expenses for *{period.replace('_', ' ')}*."
+        return "No expenses for *" + period.replace("_", " ") + "*."
     total = sum(r["amount"] for r in rows)
-    by_cat = {}
-    for r in rows:
-        by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amount"]
-    lines = [f"📊 *Expenses — {period.replace('_', ' ').title()}*\n"]
-    for cat, amt in sorted(by_cat.items(), key=lambda x: -x[1]):
-        lines.append(f"  {cat}: {fmt(amt)}")
-    lines.append(f"\n💸 *Total: {fmt(total)}*")
-    lines.append(f"🔗 {os.environ.get('DASHBOARD_URL', '')}")
+    label = period.replace("_", " ").title()
+
+    if detail:
+        lines = ["📋 *Expenses — " + label + "*\n"]
+        for r in rows:
+            desc = r.get("description") or r.get("category") or "Expense"
+            loc = " @ " + r["location"] if r.get("location") else ""
+            lines.append("  " + r["date"] + " | " + fmt(r["amount"]) + " — " + desc + loc + " [" + r.get("category","Other") + "]")
+        lines.append("\n💸 *Total: " + fmt(total) + "*")
+    else:
+        by_cat = {}
+        for r in rows:
+            by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amount"]
+        lines = ["📊 *Expenses — " + label + "*\n"]
+        for cat, amt in sorted(by_cat.items(), key=lambda x: -x[1]):
+            lines.append("  " + cat + ": " + fmt(amt))
+        lines.append("\n💸 *Total: " + fmt(total) + "*")
+
+    lines.append("🔗 " + os.environ.get("DASHBOARD_URL", ""))
     return "\n".join(lines)
 
 
 def handle_query_income(data: dict) -> str:
     period = data.get("period", "this_month")
+    detail = data.get("detail", False)
     rows = sheets.get_income(period=period, category=data.get("category"))
     if not rows:
-        return f"No income for *{period.replace('_', ' ')}*."
+        return "No income for *" + period.replace("_", " ") + "*."
     total = sum(r["amount"] for r in rows)
-    by_cat = {}
-    for r in rows:
-        by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amount"]
-    lines = [f"💰 *Income — {period.replace('_', ' ').title()}*\n"]
-    for cat, amt in sorted(by_cat.items(), key=lambda x: -x[1]):
-        lines.append(f"  {cat}: {fmt(amt)}")
-    lines.append(f"\n✅ *Total: {fmt(total)}*")
-    lines.append(f"🔗 {os.environ.get('DASHBOARD_URL', '')}")
+    label = period.replace("_", " ").title()
+
+    if detail:
+        lines = ["📋 *Income — " + label + "*\n"]
+        for r in rows:
+            desc = r.get("source") or r.get("description") or r.get("category") or "Income"
+            lines.append("  " + r["date"] + " | " + fmt(r["amount"]) + " — " + desc + " [" + r.get("category","Other") + "]")
+        lines.append("\n✅ *Total: " + fmt(total) + "*")
+    else:
+        by_cat = {}
+        for r in rows:
+            by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amount"]
+        lines = ["💰 *Income — " + label + "*\n"]
+        for cat, amt in sorted(by_cat.items(), key=lambda x: -x[1]):
+            lines.append("  " + cat + ": " + fmt(amt))
+        lines.append("\n✅ *Total: " + fmt(total) + "*")
+
+    lines.append("🔗 " + os.environ.get("DASHBOARD_URL", ""))
     return "\n".join(lines)
 
 
@@ -668,9 +696,16 @@ def telegram_webhook():
             else:
                 parsed = ask_claude(text)
 
-                # Multiple transactions (array)
+                # Multiple intents (array) — could be multi-log or multi-edit
                 if isinstance(parsed, list):
-                    reply = handle_multi(parsed)
+                    if all(item.get("intent") == "edit_transaction" for item in parsed):
+                        # Multiple edits
+                        results = []
+                        for item in parsed:
+                            results.append(handle_edit_transaction(item))
+                        reply = "\n\n".join(results)
+                    else:
+                        reply = handle_multi(parsed)
                 else:
                     intent = parsed.get("intent", "unknown")
                     handlers = {
