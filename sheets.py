@@ -214,73 +214,74 @@ def delete_last_income(count: int = 1) -> list[dict]:
     return rows
 
 
-def find_and_edit_expense(search: str, field: str, value) -> dict | None:
-    """Find most recent expense matching search keyword and edit a field."""
-    if search.lower() in ("terakhir", "last", "latest"):
-        r = requests.get(
-            f"{_url('expenses')}?order=created_at.desc&limit=1",
-            headers=_headers()
-        )
-    else:
-        # Search in description and category fields
-        r = requests.get(
-            f"{_url('expenses')}?or=(description.ilike.*{search}*,category.ilike.*{search}*,location.ilike.*{search}*)&order=created_at.desc&limit=1",
-            headers=_headers()
-        )
-    r.raise_for_status()
-    rows = r.json()
-    if not rows:
-        return None
-
-    row = rows[0]
-    row_id = row["id"]
-
-    # Convert value for amount field
+def _do_edit(table: str, row_id: int, field: str, value) -> dict:
+    """Apply patch to a row and return updated record."""
     if field == "amount":
         value = float(value)
-
-    patch = {field: value}
     patch_headers = {**_headers(), "Prefer": "return=representation"}
     pr = requests.patch(
-        f"{_url('expenses')}?id=eq.{row_id}",
-        json=patch,
+        f"{_url(table)}?id=eq.{row_id}",
+        json={field: value},
         headers=patch_headers
     )
     pr.raise_for_status()
-    updated = pr.json()
-    return updated[0] if updated else {**row, **patch}
+    result = pr.json()
+    return result[0] if result else {}
+
+
+def _search_table(table: str, search: str, search_fields: list) -> dict | None:
+    """Find most recent row matching search keyword across multiple fields."""
+    search = search.strip()
+    if search.lower() in ("terakhir", "last", "latest"):
+        r = requests.get(
+            f"{_url(table)}?order=created_at.desc&limit=1",
+            headers=_headers()
+        )
+        r.raise_for_status()
+        rows = r.json()
+        return rows[0] if rows else None
+
+    # Try multi-word search: search each word separately and find best match
+    # First try exact phrase
+    conditions = ",".join(f"{f}.ilike.*{search}*" for f in search_fields)
+    r = requests.get(
+        f"{_url(table)}?or=({conditions})&order=created_at.desc&limit=5",
+        headers=_headers()
+    )
+    r.raise_for_status()
+    rows = r.json()
+    if rows:
+        return rows[0]
+
+    # Try individual words (for multi-word search like "gaji pegawai")
+    words = [w for w in search.split() if len(w) > 2]
+    for word in words:
+        conditions = ",".join(f"{f}.ilike.*{word}*" for f in search_fields)
+        r = requests.get(
+            f"{_url(table)}?or=({conditions})&order=created_at.desc&limit=1",
+            headers=_headers()
+        )
+        r.raise_for_status()
+        rows = r.json()
+        if rows:
+            return rows[0]
+
+    return None
+
+
+def find_and_edit_expense(search: str, field: str, value) -> dict | None:
+    """Find most recent expense matching search keyword and edit a field."""
+    row = _search_table("expenses", search, ["description", "category", "location"])
+    if not row:
+        return None
+    updated = _do_edit("expenses", row["id"], field, value)
+    return updated or {**row, field: value}
 
 
 def find_and_edit_income(search: str, field: str, value) -> dict | None:
     """Find most recent income matching search keyword and edit a field."""
-    if search.lower() in ("terakhir", "last", "latest"):
-        r = requests.get(
-            f"{_url('income')}?order=created_at.desc&limit=1",
-            headers=_headers()
-        )
-    else:
-        r = requests.get(
-            f"{_url('income')}?or=(description.ilike.*{search}*,category.ilike.*{search}*,source.ilike.*{search}*)&order=created_at.desc&limit=1",
-            headers=_headers()
-        )
-    r.raise_for_status()
-    rows = r.json()
-    if not rows:
+    row = _search_table("income", search, ["description", "category", "source"])
+    if not row:
         return None
-
-    row = rows[0]
-    row_id = row["id"]
-
-    if field == "amount":
-        value = float(value)
-
-    patch = {field: value}
-    patch_headers = {**_headers(), "Prefer": "return=representation"}
-    pr = requests.patch(
-        f"{_url('income')}?id=eq.{row_id}",
-        json=patch,
-        headers=patch_headers
-    )
-    pr.raise_for_status()
-    updated = pr.json()
-    return updated[0] if updated else {**row, **patch}
+    updated = _do_edit("income", row["id"], field, value)
+    return updated or {**row, field: value}
