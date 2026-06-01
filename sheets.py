@@ -176,3 +176,111 @@ def remove_category(name: str) -> bool:
     )
     r.raise_for_status()
     return len(r.json()) > 0
+
+
+# ── Delete ─────────────────────────────────────────────────────────────────────
+
+def delete_last_expenses(count: int = 1) -> list[dict]:
+    """Delete the most recent N expense rows. Returns deleted rows."""
+    r = requests.get(
+        f"{_url('expenses')}?order=created_at.desc&limit={count}",
+        headers=_headers()
+    )
+    r.raise_for_status()
+    rows = r.json()
+    if not rows:
+        return []
+    ids = [str(row["id"]) for row in rows]
+    id_filter = "id=in.(" + ",".join(ids) + ")"
+    del_headers = {**_headers(), "Prefer": "return=representation"}
+    requests.delete(f"{_url('expenses')}?{id_filter}", headers=del_headers)
+    return rows
+
+
+def delete_last_income(count: int = 1) -> list[dict]:
+    """Delete the most recent N income rows. Returns deleted rows."""
+    r = requests.get(
+        f"{_url('income')}?order=created_at.desc&limit={count}",
+        headers=_headers()
+    )
+    r.raise_for_status()
+    rows = r.json()
+    if not rows:
+        return []
+    ids = [str(row["id"]) for row in rows]
+    id_filter = "id=in.(" + ",".join(ids) + ")"
+    del_headers = {**_headers(), "Prefer": "return=representation"}
+    requests.delete(f"{_url('income')}?{id_filter}", headers=del_headers)
+    return rows
+
+
+def find_and_edit_expense(search: str, field: str, value) -> dict | None:
+    """Find most recent expense matching search keyword and edit a field."""
+    if search.lower() in ("terakhir", "last", "latest"):
+        r = requests.get(
+            f"{_url('expenses')}?order=created_at.desc&limit=1",
+            headers=_headers()
+        )
+    else:
+        # Search in description and category fields
+        r = requests.get(
+            f"{_url('expenses')}?or=(description.ilike.*{search}*,category.ilike.*{search}*,location.ilike.*{search}*)&order=created_at.desc&limit=1",
+            headers=_headers()
+        )
+    r.raise_for_status()
+    rows = r.json()
+    if not rows:
+        return None
+
+    row = rows[0]
+    row_id = row["id"]
+
+    # Convert value for amount field
+    if field == "amount":
+        value = float(value)
+
+    patch = {field: value}
+    patch_headers = {**_headers(), "Prefer": "return=representation"}
+    pr = requests.patch(
+        f"{_url('expenses')}?id=eq.{row_id}",
+        json=patch,
+        headers=patch_headers
+    )
+    pr.raise_for_status()
+    updated = pr.json()
+    return updated[0] if updated else {**row, **patch}
+
+
+def find_and_edit_income(search: str, field: str, value) -> dict | None:
+    """Find most recent income matching search keyword and edit a field."""
+    if search.lower() in ("terakhir", "last", "latest"):
+        r = requests.get(
+            f"{_url('income')}?order=created_at.desc&limit=1",
+            headers=_headers()
+        )
+    else:
+        r = requests.get(
+            f"{_url('income')}?or=(description.ilike.*{search}*,category.ilike.*{search}*,source.ilike.*{search}*)&order=created_at.desc&limit=1",
+            headers=_headers()
+        )
+    r.raise_for_status()
+    rows = r.json()
+    if not rows:
+        return None
+
+    row = rows[0]
+    row_id = row["id"]
+
+    if field == "amount":
+        value = float(value)
+
+    patch = {field: value}
+    patch_headers = {**_headers(), "Prefer": "return=representation"}
+    pr = requests.patch(
+        f"{_url('income')}?id=eq.{row_id}",
+        json=patch,
+        headers=patch_headers
+    )
+    pr.raise_for_status()
+    updated = pr.json()
+    return updated[0] if updated else {**row, **patch}
