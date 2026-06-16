@@ -57,8 +57,12 @@ def append_expense(row: dict):
     r.raise_for_status()
 
 
-def get_expenses(period: str = "this_month", category: str = None) -> list[dict]:
-    start, end = _date_range(period)
+def get_expenses(period: str = "this_month", category: str = None,
+                  start_date: str = None, end_date: str = None) -> list[dict]:
+    if start_date and end_date:
+        start, end = start_date, end_date
+    else:
+        start, end = _date_range(period)
     qs = f"date=gte.{start}&date=lte.{end}&order=date.desc,time.desc"
     if category:
         qs += f"&category=ilike.{category}"
@@ -86,8 +90,12 @@ def append_income(row: dict):
     r.raise_for_status()
 
 
-def get_income(period: str = "this_month", category: str = None) -> list[dict]:
-    start, end = _date_range(period)
+def get_income(period: str = "this_month", category: str = None,
+               start_date: str = None, end_date: str = None) -> list[dict]:
+    if start_date and end_date:
+        start, end = start_date, end_date
+    else:
+        start, end = _date_range(period)
     qs = f"date=gte.{start}&date=lte.{end}&order=date.desc,time.desc"
     if category:
         qs += f"&category=ilike.{category}"
