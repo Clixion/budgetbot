@@ -59,12 +59,6 @@ def append_expense(row: dict):
 
 def get_expenses(period: str = "this_month", category: str = None) -> list[dict]:
     start, end = _date_range(period)
-    params = {
-        "date": f"gte.{start}",
-        "date": f"lte.{end}",
-        "order": "date.desc,time.desc",
-    }
-    # Build query string manually to support multiple filters on same field
     qs = f"date=gte.{start}&date=lte.{end}&order=date.desc,time.desc"
     if category:
         qs += f"&category=ilike.{category}"
@@ -159,26 +153,33 @@ def get_categories(cat_type: str = None) -> list[dict]:
 
 
 def add_category(name: str, cat_type: str = "expense") -> bool:
-    # Check if exists
-    r = requests.get(f"{_url('categories')}?name=ilike.{name}", headers=_headers())
+    # Check if exists (case-insensitive)
+    name_clean = name.strip()
+    r = requests.get(f"{_url('categories')}?name=ilike.{name_clean}", headers=_headers())
     if r.ok and len(r.json()) > 0:
         return False
-    payload = {"name": name.title(), "type": cat_type}
+    payload = {"name": name_clean.title(), "type": cat_type}
     r = requests.post(_url("categories"), json=payload, headers=_headers())
     r.raise_for_status()
     return True
 
 
 def remove_category(name: str) -> bool:
+    """Remove a category by name, case-insensitive, trimmed."""
+    name_clean = name.strip()
+    if not name_clean:
+        return False
+    # Use ilike with wildcards to be forgiving of minor casing/spacing differences
     r = requests.delete(
-        f"{_url('categories')}?name=ilike.{name}",
+        f"{_url('categories')}?name=ilike.*{name_clean}*",
         headers={**_headers(), "Prefer": "return=representation"}
     )
     r.raise_for_status()
-    return len(r.json()) > 0
+    deleted = r.json()
+    return len(deleted) > 0
 
 
-# ── Delete ─────────────────────────────────────────────────────────────────────
+# ── Delete transactions ─────────────────────────────────────────────────────────
 
 def delete_last_expenses(count: int = 1) -> list[dict]:
     """Delete the most recent N expense rows. Returns deleted rows."""
@@ -214,6 +215,8 @@ def delete_last_income(count: int = 1) -> list[dict]:
     return rows
 
 
+# ── Edit transactions ────────────────────────────────────────────────────────────
+
 def _do_edit(table: str, row_id: int, field: str, value) -> dict:
     """Apply patch to a row and return updated record."""
     if field == "amount":
@@ -241,8 +244,7 @@ def _search_table(table: str, search: str, search_fields: list) -> dict | None:
         rows = r.json()
         return rows[0] if rows else None
 
-    # Try multi-word search: search each word separately and find best match
-    # First try exact phrase
+    # Try exact phrase first
     conditions = ",".join(f"{f}.ilike.*{search}*" for f in search_fields)
     r = requests.get(
         f"{_url(table)}?or=({conditions})&order=created_at.desc&limit=5",
@@ -253,7 +255,7 @@ def _search_table(table: str, search: str, search_fields: list) -> dict | None:
     if rows:
         return rows[0]
 
-    # Try individual words (for multi-word search like "gaji pegawai")
+    # Fall back to individual words (handles multi-word search like "gaji pegawai")
     words = [w for w in search.split() if len(w) > 2]
     for word in words:
         conditions = ",".join(f"{f}.ilike.*{word}*" for f in search_fields)
