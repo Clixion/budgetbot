@@ -35,7 +35,6 @@ body {
   overflow-x: hidden;
 }
 
-/* ── Grain overlay ── */
 body::before {
   content: '';
   position: fixed;
@@ -46,7 +45,6 @@ body::before {
   opacity: 0.4;
 }
 
-/* ── Header ── */
 header {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -120,7 +118,6 @@ header {
   border-color: var(--ink);
 }
 
-/* ── Hero strip ── */
 .hero {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -178,7 +175,6 @@ header {
   font-family: var(--font-mono);
 }
 
-/* ── Main layout ── */
 main {
   max-width: 1400px;
   margin: 0 auto;
@@ -187,10 +183,8 @@ main {
   gap: 2rem;
 }
 
-/* ── Section hide ── */
 .section-hide { display: none !important; }
 
-/* ── Cashflow banner ── */
 .cashflow-banner {
   background: var(--ink);
   color: var(--paper);
@@ -257,7 +251,6 @@ main {
 .cf-net-value.pos { color: #7ec99a; }
 .cf-net-value.neg { color: #e88a82; }
 
-/* ── Grid 2 ── */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem; }
 
@@ -269,7 +262,6 @@ main {
   .cashflow-banner { grid-template-columns: 1fr; }
 }
 
-/* ── Cards ── */
 .card {
   background: var(--paper);
   border: 1px solid var(--border);
@@ -308,11 +300,12 @@ main {
 .card-dark .card-label { color: rgba(247,244,239,0.4); }
 .card-accent .card-label { color: rgba(247,244,239,0.6); }
 
-/* ── Chart containers ── */
 .chart-wrap { position: relative; }
 
-/* ── Expense rows ── */
-.tx-list { display: flex; flex-direction: column; }
+.tx-list { display: flex; flex-direction: column; max-height: 420px; overflow-y: auto; scrollbar-width: thin; }
+.tx-list::-webkit-scrollbar { width: 6px; }
+.tx-list::-webkit-scrollbar-thumb { background: var(--paper3); border-radius: 3px; }
+.tx-list::-webkit-scrollbar-track { background: transparent; }
 
 .tx-row {
   display: flex;
@@ -370,7 +363,6 @@ main {
 .tx-amount.out { color: var(--accent); }
 .tx-amount.in { color: var(--accent2); }
 
-/* ── Asset table ── */
 .asset-table { width: 100%; border-collapse: collapse; }
 
 .asset-table th {
@@ -406,7 +398,6 @@ main {
   letter-spacing: 0.06em;
 }
 
-/* ── Category chips ── */
 .cat-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .cat-chip {
@@ -419,7 +410,6 @@ main {
   letter-spacing: 0.03em;
 }
 
-/* ── Legend ── */
 .legend {
   display: flex;
   flex-wrap: wrap;
@@ -442,7 +432,6 @@ main {
   flex-shrink: 0;
 }
 
-/* ── Big number display ── */
 .big-number {
   font-family: var(--font-display);
   font-size: 3rem;
@@ -450,7 +439,6 @@ main {
   line-height: 1;
 }
 
-/* ── Section title ── */
 .section-title {
   font-family: var(--font-display);
   font-size: 1.4rem;
@@ -459,7 +447,6 @@ main {
   margin-bottom: 1rem;
 }
 
-/* ── Empty state ── */
 .empty {
   text-align: center;
   color: var(--muted);
@@ -469,7 +456,6 @@ main {
   letter-spacing: 0.04em;
 }
 
-/* ── Refresh btn ── */
 .refresh-btn {
   font-family: var(--font-mono);
   font-size: 0.65rem;
@@ -485,7 +471,6 @@ main {
 
 .refresh-btn:hover { background: var(--paper2); color: var(--ink); }
 
-/* ── Decorative header line ── */
 .ruled-title {
   display: flex;
   align-items: center;
@@ -506,7 +491,6 @@ main {
   background: var(--border);
 }
 
-/* ── Animate in ── */
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
@@ -524,7 +508,6 @@ main {
 </head>
 <body>
 
-<!-- Header -->
 <header>
   <div class="logo">BUDGET<span>.</span></div>
   <div class="period-tabs">
@@ -532,6 +515,7 @@ main {
     <button class="tab" onclick="setPeriod('this_week',this)">Week</button>
     <button class="tab" onclick="setPeriod('today',this)">Today</button>
     <button class="tab" onclick="setPeriod('last_month',this)">Last</button>
+    <button class="tab" id="custom-tab" onclick="toggleCustomRange(this)">Custom</button>
   </div>
   <div class="view-tabs">
     <button class="vtab active" onclick="setView('overview',this)">Overview</button>
@@ -541,7 +525,14 @@ main {
   </div>
 </header>
 
-<!-- Hero stats -->
+<div id="custom-range-bar" class="section-hide" style="display:flex; align-items:center; gap:10px; padding:.75rem 2.5rem; border-bottom:1px solid var(--border); background:var(--paper2);">
+  <span style="font-family:var(--font-mono); font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em;">From</span>
+  <input type="date" id="range-start" style="font-family:var(--font-mono); font-size:.78rem; padding:5px 8px; border:1px solid var(--border); border-radius:6px; background:var(--paper);">
+  <span style="font-family:var(--font-mono); font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em;">To</span>
+  <input type="date" id="range-end" style="font-family:var(--font-mono); font-size:.78rem; padding:5px 8px; border:1px solid var(--border); border-radius:6px; background:var(--paper);">
+  <button class="refresh-btn" onclick="applyCustomRange()" style="margin-left:6px;">Apply</button>
+</div>
+
 <div class="hero">
   <div class="hero-stat" data-index="01">
     <div class="stat-label">Income</div>
@@ -565,12 +556,9 @@ main {
   </div>
 </div>
 
-<!-- Main -->
 <main>
 
-  <!-- OVERVIEW -->
   <div id="view-overview">
-    <!-- Cashflow banner -->
     <div class="cashflow-banner" style="margin-bottom:2rem">
       <div class="cf-left">
         <div class="cf-title">SPENDING RATIO</div>
@@ -584,7 +572,6 @@ main {
     </div>
 
     <div class="grid-2" style="margin-bottom:1.5rem">
-      <!-- Expense donut -->
       <div class="card">
         <div class="card-label">Expenses by category</div>
         <div class="legend" id="exp-legend"></div>
@@ -592,7 +579,6 @@ main {
           <canvas id="expCatChart"></canvas>
         </div>
       </div>
-      <!-- Income donut -->
       <div class="card">
         <div class="card-label">Income by source</div>
         <div class="legend" id="inc-legend"></div>
@@ -602,7 +588,6 @@ main {
       </div>
     </div>
 
-    <!-- Daily bar chart -->
     <div class="card">
       <div class="card-label">
         Daily breakdown
@@ -617,7 +602,6 @@ main {
     </div>
   </div>
 
-  <!-- EXPENSES -->
   <div id="view-expenses" class="section-hide">
     <div class="grid-2">
       <div class="card">
@@ -626,13 +610,12 @@ main {
         <div class="chart-wrap" style="height:220px"><canvas id="expCatChart2"></canvas></div>
       </div>
       <div class="card">
-        <div class="card-label">Recent transactions</div>
+        <div class="card-label">All transactions <span id="exp-count" style="font-weight:400; color:var(--muted);"></span></div>
         <div class="tx-list" id="exp-list"><div class="empty">Loading...</div></div>
       </div>
     </div>
   </div>
 
-  <!-- INCOME -->
   <div id="view-income" class="section-hide">
     <div class="grid-2">
       <div class="card">
@@ -641,13 +624,12 @@ main {
         <div class="chart-wrap" style="height:220px"><canvas id="incCatChart2"></canvas></div>
       </div>
       <div class="card">
-        <div class="card-label">Recent income</div>
+        <div class="card-label">All income <span id="inc-count" style="font-weight:400; color:var(--muted);"></span></div>
         <div class="tx-list" id="inc-list"><div class="empty">Loading...</div></div>
       </div>
     </div>
   </div>
 
-  <!-- PORTFOLIO -->
   <div id="view-portfolio" class="section-hide">
     <div class="grid-2">
       <div class="card">
@@ -677,8 +659,31 @@ main {
 let period = 'this_month';
 let currentView = 'overview';
 let charts = {};
+let customRange = null; // {start, end} when custom range is active
 
-// Palette
+function toggleCustomRange(btn) {
+  const bar = document.getElementById('custom-range-bar');
+  const isHidden = bar.classList.contains('section-hide');
+  if (isHidden) {
+    bar.classList.remove('section-hide');
+    bar.style.display = 'flex';
+    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const today = new Date().toISOString().slice(0,10);
+    if (!document.getElementById('range-end').value) document.getElementById('range-end').value = today;
+  } else {
+    bar.classList.add('section-hide');
+  }
+}
+
+function applyCustomRange() {
+  const start = document.getElementById('range-start').value;
+  const end = document.getElementById('range-end').value;
+  if (!start || !end) return;
+  customRange = { start, end };
+  loadAll();
+}
+
 const EXP_PAL = ['#c8473a','#e07b52','#c9a84c','#7b9e3e','#2b5c3f','#3a7a8c','#7b4a8c','#8c6b3a'];
 const INC_PAL = ['#2b5c3f','#3a8c5a','#c9a84c','#3a7a8c','#7b4a8c'];
 
@@ -699,6 +704,8 @@ function fmtDate(d) {
 
 function setPeriod(p, btn) {
   period = p;
+  customRange = null;
+  document.getElementById('custom-range-bar').classList.add('section-hide');
   document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   loadAll();
@@ -756,9 +763,14 @@ function groupByDate(rows) {
 }
 
 async function loadAll() {
+  const expQuery = customRange
+    ? `start_date=${customRange.start}&end_date=${customRange.end}`
+    : `period=${period}`;
+  const incQuery = expQuery;
+
   const [expenses, income, assets, categories] = await Promise.all([
-    fetch(`/api/expenses?period=${period}`).then(r=>r.json()).catch(()=>[]),
-    fetch(`/api/income?period=${period}`).then(r=>r.json()).catch(()=>[]),
+    fetch(`/api/expenses?${expQuery}`).then(r=>r.json()).catch(()=>[]),
+    fetch(`/api/income?${incQuery}`).then(r=>r.json()).catch(()=>[]),
     fetch('/api/assets').then(r=>r.json()).catch(()=>[]),
     fetch('/api/categories').then(r=>r.json()).catch(()=>[]),
   ]);
@@ -809,7 +821,6 @@ function renderOverview(expenses, income) {
   netEl.textContent = (net>=0?'+':'-') + fmtIDR(Math.abs(net));
   netEl.className = 'cf-net-value '+(net>=0?'pos':'neg');
 
-  // Donuts
   const expByCat = groupBy(expenses,'category');
   const expLabels = Object.keys(expByCat), expData = Object.values(expByCat);
   makeLegend('exp-legend', expLabels, EXP_PAL);
@@ -820,7 +831,6 @@ function renderOverview(expenses, income) {
   makeLegend('inc-legend', incLabels, INC_PAL);
   makeDoughnut('incCatChart', incLabels, incData, INC_PAL);
 
-  // Daily bar
   const expByDate = groupByDate(expenses);
   const incByDate = groupByDate(income);
   const allDates = [...new Set([...Object.keys(expByDate),...Object.keys(incByDate)])].sort();
@@ -857,9 +867,12 @@ function renderExpenses(expenses) {
   makeLegend('exp-legend2', labels, EXP_PAL);
   makeDoughnut('expCatChart2', labels, data, EXP_PAL);
 
+  const countEl = document.getElementById('exp-count');
+  if (countEl) countEl.textContent = expenses.length ? '(' + expenses.length + ')' : '';
+
   const el = document.getElementById('exp-list');
   if(!expenses.length) { el.innerHTML='<div class="empty">No expenses this period.</div>'; return; }
-  el.innerHTML = [...expenses].reverse().slice(0,10).map((r,i)=>`
+  el.innerHTML = [...expenses].reverse().map((r,i)=>`
     <div class="tx-row">
       <div class="tx-dot" style="background:${EXP_PAL[i%EXP_PAL.length]}"></div>
       <div class="tx-left">
@@ -877,9 +890,12 @@ function renderIncome(income) {
   makeLegend('inc-legend2', labels, INC_PAL);
   makeDoughnut('incCatChart2', labels, data, INC_PAL);
 
+  const countEl = document.getElementById('inc-count');
+  if (countEl) countEl.textContent = income.length ? '(' + income.length + ')' : '';
+
   const el = document.getElementById('inc-list');
   if(!income.length) { el.innerHTML='<div class="empty">No income this period.</div>'; return; }
-  el.innerHTML = [...income].reverse().slice(0,10).map((r,i)=>`
+  el.innerHTML = [...income].reverse().map((r,i)=>`
     <div class="tx-row">
       <div class="tx-dot" style="background:${INC_PAL[i%INC_PAL.length]}"></div>
       <div class="tx-left">
