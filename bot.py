@@ -155,13 +155,25 @@ For "query_date":
 Examples: "tanggal berapa sekarang?", "hari ini tanggal berapa?", "what day is today?", "sekarang jam berapa?"
 
 For "delete_transactions":
-{{"intent":"delete_transactions","count":<number of recent entries to delete, default 1>,"type":<"expense"|"income"|"any">}}
-Examples: "hapus transaksi terakhir" → count=1, type=any
-"hapus 3 pengeluaran terakhir" → count=3, type=expense
-"delete last income" → count=1, type=income
+{{"intent":"delete_transactions","count":<number of recent entries to delete, default 1, ONLY used when no search/date/amount is given>,"type":<"expense"|"income"|"any">,"search":<specific keyword to find the transaction — merchant/item/description/category name mentioned in the message, or null if none given>,"date":<YYYY-MM-DD if a specific date is mentioned, else null>,"amount":<IDR number if a specific amount/price is mentioned, else null>}}
+
+IMPORTANT for delete_transactions:
+- If the user names a specific item, merchant, category, date, or amount, ALWAYS put it in "search"/"date"/"amount" — do NOT fall back to deleting "the most recent" transaction. The count+type-only deletion is ONLY for vague requests like "hapus transaksi terakhir" with no identifying details at all.
+- "search" should be the most specific noun phrase identifying the transaction (e.g. "Hotel Ngurah Rai", "Gojek ke Bandara", "Transport"), ignoring filler words like "delete", "that costs", "on", "tanggal".
+- If a date is mentioned (e.g. "on 12 Jun 2026", "tanggal 2 juni"), put it in "date" as YYYY-MM-DD.
+- If a specific price/amount is mentioned (e.g. "that costs 106000"), put it in "amount".
+
+Examples:
+- "Delete Transport Hotel-Ngurah rai on 12 Jun 2026" → search="Hotel Ngurah Rai", type="expense", date="2026-06-12"
+- "Delete Gojek ke Bandara that costs 106000" → search="Gojek ke Bandara", type="expense", amount=106000
+- "hapus transaksi terakhir" → count=1, type="any", search=null
+- "hapus 3 pengeluaran terakhir" → count=3, type="expense", search=null
+- "delete last income" → count=1, type="income", search=null
+- "Hapus transaksi McD" → search="McD", type="expense"
 
 For "edit_transaction":
 {{"intent":"edit_transaction","type":<"expense"|"income">,"search":<specific keyword from the message to find the transaction — use the merchant/item name like "gaji pegawai", "McD", "Lanzhou", "grab"; only use "last" if no specific name is mentioned>,"field":<"amount"|"category"|"description"|"location"|"source"|"date">,"value":<new value as string>}}
+
 
 IMPORTANT for edit_transaction:
 - "ingat itu" / "remember this" / "catat" = the user is teaching the bot a rule → still treat as edit_transaction for the most recent matching transaction
@@ -615,18 +627,52 @@ def handle_query_date() -> str:
 # ── Delete handler ────────────────────────────────────────────────────────────
 
 def handle_delete_transactions(data: dict) -> str:
-    count = int(data.get("count", 1))
+    search = data.get("search")
+    date_filter = data.get("date")
+    amount_filter = data.get("amount")
     tx_type = data.get("type", "any")
+    count = int(data.get("count", 1))
 
+    # If any identifying detail is given, do a targeted search-and-delete instead
+    # of blindly removing the most recent N transactions.
+    if search or date_filter or amount_filter:
+        deleted = []
+        errors = []
+
+        types_to_check = ["expense", "income"] if tx_type == "any" else [tx_type]
+        for t in types_to_check:
+            try:
+                row = sheets.find_transaction(t, search=search, date=date_filter, amount=amount_filter)
+            except Exception as e:
+                errors.append(str(e))
+                continue
+            if row:
+                try:
+                    sheets.delete_transaction_by_id(t, row["id"])
+                    deleted.append((t, row))
+                except Exception as e:
+                    errors.append(str(e))
+
+        if not deleted:
+            label = search or date_filter or (fmt(float(amount_filter)) if amount_filter else "")
+            return ("⚠️ Could not find a transaction matching *" + str(label) + "*\n"
+                    "Try being more specific, e.g. the merchant name, date, or amount.")
+
+        lines = ["🗑 *" + str(len(deleted)) + " transaction" + ("s" if len(deleted) != 1 else "") + " deleted*"]
+        for t, r in deleted:
+            desc = r.get("description") or r.get("source") or r.get("category") or ("Expense" if t == "expense" else "Income")
+            lines.append("  ~~" + fmt(float(r["amount"])) + " — " + desc + " (" + r.get("date", "") + ")~~")
+        lines.append("_To undo, re-log the transaction manually._")
+        return "\n".join(lines)
+
+    # No identifying details given — fall back to deleting the most recent N
     deleted_exp, deleted_inc = [], []
 
     if tx_type in ("expense", "any"):
-        n = count if tx_type == "expense" else count
-        deleted_exp = sheets.delete_last_expenses(n)
+        deleted_exp = sheets.delete_last_expenses(count)
 
     if tx_type in ("income", "any"):
-        n = count if tx_type == "income" else count
-        deleted_inc = sheets.delete_last_income(n)
+        deleted_inc = sheets.delete_last_income(count)
 
     total = len(deleted_exp) + len(deleted_inc)
 
