@@ -295,3 +295,66 @@ def find_and_edit_income(search: str, field: str, value) -> dict | None:
         return None
     updated = _do_edit("income", row["id"], field, value)
     return updated or {**row, field: value}
+
+
+# ── Combined search (keyword + date + amount) for targeted delete ──────────────
+
+def find_transaction(tx_type: str, search: str = None, date: str = None, amount: float = None) -> dict | None:
+    """
+    Find a single transaction in 'expenses' or 'income' matching any combination
+    of: search keyword (across description/category/location/source),
+    exact date (YYYY-MM-DD), and/or exact amount. All given filters must match.
+    Returns the best (most recent) match, or None.
+    """
+    table = "expenses" if tx_type == "expense" else "income"
+    search_fields = ["description", "category", "location"] if tx_type == "expense" else ["description", "category", "source"]
+
+    filters = []
+    if date:
+        filters.append(f"date=eq.{date}")
+    if amount is not None:
+        filters.append(f"amount=eq.{amount}")
+
+    base_filter = "&".join(filters)
+
+    def _run_query(or_clause: str = None) -> list[dict]:
+        qs = base_filter
+        if or_clause:
+            qs = (qs + "&" if qs else "") + f"or=({or_clause})"
+        qs += ("&" if qs else "") + "order=created_at.desc&limit=5"
+        r = requests.get(f"{_url(table)}?{qs}", headers=_headers())
+        r.raise_for_status()
+        return r.json()
+
+    if search and search.strip().lower() not in ("terakhir", "last", "latest"):
+        search = search.strip()
+        # Try exact phrase across search fields, combined with date/amount filters
+        or_clause = ",".join(f"{f}.ilike.*{search}*" for f in search_fields)
+        rows = _run_query(or_clause)
+        if rows:
+            return rows[0]
+
+        # Fall back to individual words, still combined with date/amount filters
+        words = [w for w in search.split() if len(w) > 2]
+        for word in words:
+            or_clause = ",".join(f"{f}.ilike.*{word}*" for f in search_fields)
+            rows = _run_query(or_clause)
+            if rows:
+                return rows[0]
+
+        # No match even with date/amount filters relaxed-search — try without filters
+        return None
+    else:
+        # No search keyword — just use date/amount filters alone (or most recent if neither given)
+        rows = _run_query()
+        return rows[0] if rows else None
+
+
+def delete_transaction_by_id(tx_type: str, row_id: int) -> bool:
+    """Delete a single transaction by its row id."""
+    table = "expenses" if tx_type == "expense" else "income"
+    del_headers = {**_headers(), "Prefer": "return=representation"}
+    r = requests.delete(f"{_url(table)}?id=eq.{row_id}", headers=del_headers)
+    r.raise_for_status()
+    result = r.json()
+    return len(result) > 0
