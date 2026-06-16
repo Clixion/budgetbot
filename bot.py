@@ -805,11 +805,19 @@ def dashboard():
 
 @app.route("/api/expenses")
 def api_expenses():
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    if start_date and end_date:
+        return jsonify(sheets.get_expenses(start_date=start_date, end_date=end_date))
     return jsonify(sheets.get_expenses(period=request.args.get("period", "this_month")))
 
 
 @app.route("/api/income")
 def api_income():
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    if start_date and end_date:
+        return jsonify(sheets.get_income(start_date=start_date, end_date=end_date))
     return jsonify(sheets.get_income(period=request.args.get("period", "this_month")))
 
 
