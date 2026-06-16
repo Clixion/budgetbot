@@ -40,10 +40,8 @@ def send_message(chat_id: int, text: str):
 
 def download_image(file_id: str) -> tuple[bytes, str]:
     """Download image from Telegram servers."""
-    # Get file path
     r = req_lib.get(f"{TELEGRAM_API}/getFile", params={"file_id": file_id})
     file_path = r.json()["result"]["file_path"]
-    # Download file
     url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
     img_r = req_lib.get(url, timeout=15)
     img_r.raise_for_status()
@@ -133,6 +131,25 @@ For "remove_category":
 For "list_categories":
 {{"intent":"list_categories","cat_type":<"expense"|"income"|null>}}
 
+CATEGORY COMMAND RULES — read carefully, these take priority over log_expense/log_income:
+- Any message containing the word "category" or "kategori" combined with action words like "add"/"tambah", "remove"/"hapus"/"delete" is ALWAYS a category management intent — NEVER log_expense or log_income, even if amounts or item names appear nearby.
+- "Delete that category" / "hapus kategori itu" — refers to whatever category name was most recently created or mentioned in the immediately preceding turn. Use that exact name.
+- A single message can request MULTIPLE category actions at once. If so, return a JSON ARRAY with one object per action, in order.
+- If the user says an item/description "is now category Y" / "masuk kategori Y" / "kategorinya Y" and that item was previously logged as a TRANSACTION (not a standalone category), this means RECLASSIFY the transaction — use intent "edit_transaction" with field="category", not add_category.
+- If the user explicitly says to delete/remove a category that was wrongly auto-created, use "remove_category" with that category's name.
+- Never invent a log_expense or log_income entry when the message is purely about managing categories — there is no new amount being logged.
+
+Examples:
+- "Delete category Bali Farm House" → {{"intent":"remove_category","name":"Bali Farm House"}}
+- "Delete that category, add bali farm house to entertainment category" → ARRAY:
+  [
+    {{"intent":"remove_category","name":"Bali Farm House"}},
+    {{"intent":"edit_transaction","type":"expense","search":"Bali farm house","field":"category","value":"Entertainment"}}
+  ]
+- "Add category Groceries for expense" → {{"intent":"add_category","name":"Groceries","cat_type":"expense"}}
+- "Remove category Shopping" → {{"intent":"remove_category","name":"Shopping"}}
+- "Show my categories" → {{"intent":"list_categories"}}
+
 For "query_date":
 {{"intent":"query_date"}}
 Examples: "tanggal berapa sekarang?", "hari ini tanggal berapa?", "what day is today?", "sekarang jam berapa?"
@@ -212,26 +229,22 @@ Tips:
 def extract_json(text: str):
     """Robustly extract JSON (object or array) from Claude response."""
     text = re.sub(r"```json|```", "", text).strip()
-    # Try direct parse first (handles both dict and list)
     try:
         return json.loads(text)
     except Exception:
         pass
-    # Try to find a JSON array first
     match = re.search(r"\[.*?\]", text, re.DOTALL)
     if match:
         try:
             return json.loads(match.group())
         except Exception:
             pass
-    # Try first {...} block
     match = re.search(r"\{.*?\}", text, re.DOTALL)
     if match:
         try:
             return json.loads(match.group())
         except Exception:
             pass
-    # Last resort — largest {...} block
     matches = re.findall(r"\{[^{}]*\}", text, re.DOTALL)
     for m in sorted(matches, key=len, reverse=True):
         try:
@@ -560,6 +573,27 @@ def handle_edit_transaction(data: dict) -> str:
     )
 
 
+# ── Mixed-action dispatch (for arrays with different intent types) ─────────────
+
+def handle_category_action(item: dict) -> str:
+    """Dispatch a single intent (used when an array contains mixed intent types)."""
+    intent = item.get("intent")
+    if intent == "add_category":
+        return handle_add_category(item)
+    elif intent == "remove_category":
+        return handle_remove_category(item)
+    elif intent == "list_categories":
+        return handle_list_categories(item)
+    elif intent == "edit_transaction":
+        return handle_edit_transaction(item)
+    elif intent == "log_expense":
+        return handle_log_expense(item)
+    elif intent == "log_income":
+        return handle_log_income(item)
+    else:
+        return "⚠️ Could not process: " + str(intent)
+
+
 # ── Date handler ──────────────────────────────────────────────────────────────
 
 def handle_query_date() -> str:
@@ -594,9 +628,6 @@ def handle_delete_transactions(data: dict) -> str:
         n = count if tx_type == "income" else count
         deleted_inc = sheets.delete_last_income(n)
 
-    # For "any", we want the most recent N across both — delete from whichever had newer entries
-    # Simple approach: if type=any, delete last N expenses (most common case)
-    # User can specify type=income to target income
     total = len(deleted_exp) + len(deleted_inc)
 
     if total == 0:
@@ -696,7 +727,6 @@ def telegram_webhook():
     try:
         # ── Photo → receipt scanner ───────────────────────────────────────────
         if photo:
-            # Use highest resolution photo (last in array)
             file_id = photo[-1]["file_id"]
             image_bytes, media_type = download_image(file_id)
             reply = handle_receipt(image_bytes, media_type, caption)
@@ -719,16 +749,18 @@ def telegram_webhook():
             else:
                 parsed = ask_claude(text)
 
-                # Multiple intents (array) — could be multi-log or multi-edit
+                # Multiple intents (array) — could be multi-log, multi-edit, or mixed category actions
                 if isinstance(parsed, list):
-                    if all(item.get("intent") == "edit_transaction" for item in parsed):
-                        # Multiple edits
-                        results = []
-                        for item in parsed:
-                            results.append(handle_edit_transaction(item))
+                    all_intents = [item.get("intent") for item in parsed]
+                    if all(i == "edit_transaction" for i in all_intents):
+                        results = [handle_edit_transaction(item) for item in parsed]
                         reply = "\n\n".join(results)
-                    else:
+                    elif all(i in ("log_expense", "log_income") for i in all_intents):
                         reply = handle_multi(parsed)
+                    else:
+                        # Mixed bag (e.g. remove_category + edit_transaction) — dispatch each
+                        results = [handle_category_action(item) for item in parsed]
+                        reply = "\n\n".join(results)
                 else:
                     intent = parsed.get("intent", "unknown")
                     handlers = {
